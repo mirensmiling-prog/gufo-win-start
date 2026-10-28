@@ -12,22 +12,22 @@ $ErrorActionPreference = 'Stop'
 $launcherRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 function Get-GufoConsoleWidth {
-    try {
-        $width = [int]$Host.UI.RawUI.WindowSize.Width
-        # 留出最后一列，避免部分 Windows 终端自动换行后又多出空行。
-        if ($width -ge 5) { return ($width - 1) }
-        if ($width -gt 0) { return 4 }
-    } catch { }
-    79
+    $widths = New-Object 'Collections.Generic.List[int]'
+    try { if ($Host.UI.RawUI.WindowSize.Width -gt 0) { $widths.Add([int]$Host.UI.RawUI.WindowSize.Width) } } catch { }
+    try { if ([Console]::WindowWidth -gt 0) { $widths.Add([Console]::WindowWidth) } } catch { }
+    if ($widths.Count -gt 0) { return [Math]::Max(4, (($widths | Measure-Object -Minimum).Minimum - 2)) }
+    78
 }
 
 function Get-GufoCellWidth([string]$Text) {
-    try { return $Host.UI.RawUI.LengthInBufferCells($Text) } catch { }
+    # 统一按文本元素计算。某些中文宿主对整串、单字和装饰符的计宽不同，不能混用。
     $width = 0
     $elements = [Globalization.StringInfo]::GetTextElementEnumerator($Text)
     while ($elements.MoveNext()) {
         $element = [string]$elements.Current
         $point = [char]::ConvertToUtf32($element, 0)
+        $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($element, 0)
+        if ($category -in @([Globalization.UnicodeCategory]::NonSpacingMark, [Globalization.UnicodeCategory]::EnclosingMark, [Globalization.UnicodeCategory]::Format)) { continue }
         if (($point -ge 0x1100 -and $point -le 0x115f) -or
             ($point -ge 0x2e80 -and $point -le 0xa4cf) -or
             ($point -ge 0xac00 -and $point -le 0xd7a3) -or
@@ -216,6 +216,7 @@ function Start-GufoSelection($Model, [hashtable]$Options) {
         Write-Host (Format-GufoCommand -ExePath $script:exe -Arguments $arguments) -ForegroundColor Cyan
         if ($DryRun) {
             Write-Host 'DryRun：仅检查和预览，未启动服务、未写设置。'
+            Write-Host ('轻量监控：{0}（本次不加载、不运行）' -f $(if ($Options.Monitor) { '开启' } else { '关闭' }))
             if ($Options.Host -eq '0.0.0.0') { Write-Host 'API Key 将在实际启动时询问，可留空；本次预览未包含 Key。' }
             return $true
         }
@@ -230,6 +231,7 @@ function Start-GufoSelection($Model, [hashtable]$Options) {
         Write-Host ('API 鉴权：{0}' -f $(if ($key) { '已启用 Bearer Key' } else { '未启用（API Key 留空）' }))
         Write-Host '进程启动后仍需加载模型，以 Gufo 窗口中的就绪信息为准；Ctrl+C 停止服务。'
         if ($Foreground) {
+            if ($Options.Monitor) { Write-Warning '前台排障保留 Gufo 原始输出，本次不显示监控；菜单中的监控设置仍保留。' }
             # 前台模式用于排障；不捕获或改写 Gufo 的原始实时输出。
             Push-Location ([IO.Path]::GetDirectoryName($script:exe))
             try {
@@ -242,13 +244,33 @@ function Start-GufoSelection($Model, [hashtable]$Options) {
                 finally { $process.Dispose() }
             } finally { Pop-Location }
         } else {
-            $process = Start-Process -FilePath $script:exe -ArgumentList (ConvertTo-GufoArgumentString $arguments) -WorkingDirectory ([IO.Path]::GetDirectoryName($script:exe)) -PassThru
+            $monitored = $null
+            if ($Options.Monitor) {
+                . (Join-Path $PSScriptRoot 'launcher-host.ps1')
+                $monitored = Start-GufoMonitoredEngine -ExePath $script:exe -Arguments $arguments
+                $process = $monitored.Process
+            } else {
+                $process = Start-Process -FilePath $script:exe -ArgumentList (ConvertTo-GufoArgumentString $arguments) -WorkingDirectory ([IO.Path]::GetDirectoryName($script:exe)) -PassThru
+            }
             try {
                 if ($process.WaitForExit(1200)) { throw "Gufo 在启动阶段退出（code=$($process.ExitCode)），请用 start.cmd -Foreground 查看原始错误。" }
-                Write-Host ("已启动 Gufo，PID {0}。菜单现在退出，服务继续在独立窗口运行。" -f $process.Id) -ForegroundColor Green
+                try { Save-GufoSettings -Path $script:configPath -Model $fresh -Options $Options -Roots $script:roots }
+                catch { Write-Warning ("服务已启动，但无法保存下次启动设置：{0}" -f $_.Exception.Message) }
+                if ($Options.Monitor) {
+                    Write-Host '已启动独立 Gufo 窗口；正在连接实际引擎 PID，模型就绪状态以服务窗口为准。' -ForegroundColor Green
+                    $arguments = $null
+                    try {
+                        # 关闭时不读取或编译监控模块，不增加常驻进程。
+                        . (Join-Path $PSScriptRoot 'launcher-monitor.ps1')
+                        Start-GufoMonitor -Process $process -Caption $Model.Name -Port ([int]$Options.Port) -ApiKey $key -StatsPipeName $monitored.PipeName
+                    } catch {
+                        Write-Warning ("监控未能继续；Gufo 独立服务不受影响：{0}" -f $_.Exception.Message)
+                        if (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) { Wait-GufoMenu }
+                    }
+                } else {
+                    Write-Host ("已启动 Gufo，PID {0}。菜单现在退出，服务继续在独立窗口运行。" -f $process.Id) -ForegroundColor Green
+                }
             } finally { $process.Dispose() }
-            try { Save-GufoSettings -Path $script:configPath -Model $fresh -Options $Options -Roots $script:roots }
-            catch { Write-Warning ("服务已启动，但无法保存下次启动设置：{0}" -f $_.Exception.Message) }
         }
         return $true
     } finally { $key = ''; $arguments = $null }
@@ -280,6 +302,7 @@ function Show-GufoFeatures($Model, [hashtable]$Options) {
     Write-GufoMenuLine '   按 7 循环：32K -> 64K -> 128K -> 256K -> 原生' 'DarkGray'
     Write-GufoMenuLine ('8  监听地址：{0}' -f $Options.Host)
     Write-GufoMenuLine ('9  实时进度：{0}' -f $(if ($Options.LogProgress) { '开启' } else { '关闭' }))
+    Write-GufoMenuLine ('M  轻量监控：{0}（推理 / 内存 / 磁盘）' -f $(if ($Options.Monitor) { '开启' } else { '关闭' }))
     Write-GufoMenuLine ('F  草稿下限：{0}' -f $Options.MinDraftTokens)
     Write-GufoMenuLine ('C  磁盘缓存：{0}' -f $(if ($Options.CacheDisk) { '已设置（按 C 更改）' } else { '未启用' }))
     if ($Options.CacheDisk) { Write-GufoMenuLine $Options.CacheDisk 'DarkGray' '  ' }
@@ -318,6 +341,7 @@ function Edit-GufoFeatures($Model, [hashtable]$Options, $Inventory) {
                 '7' { $Options.Context = Get-GufoNextContext ([uint64]$Options.Context) }
                 '8' { $Options.Host = if ($Options.Host -eq '127.0.0.1') { '0.0.0.0' } else { '127.0.0.1' } }
                 '9' { $Options.LogProgress = -not [bool]$Options.LogProgress }
+                'M' { $Options.Monitor = -not [bool]$Options.Monitor }
                 'F' { $Options.MinDraftTokens = Get-GufoUnsigned (Read-Host '最小草稿数（官方默认 1）') 'min-draft-tokens' 1 4294967295 }
                 'C' {
                     $path = (Read-Host '已有磁盘缓存目录（留空关闭）').Trim().Trim('"')

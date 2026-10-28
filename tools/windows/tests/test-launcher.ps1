@@ -752,12 +752,12 @@ $value = Read-GufoSecret
     $displayOptions.DraftPath = 'E:\新建文件夹\gufo-v0.25.0-windows-x86_64\models\MTP\mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf'
     $rendered = Invoke-GufoUiProbe -FunctionTexts $uiTexts -ProbeText 'Show-GufoFeatures $TestModel $TestOptions' -Model $displayModel -Options $displayOptions -Width 52
     Test-Case '每个配置快捷键独占一行且没有并排选项' {
-        $rows = @($rendered.Lines | Where-Object { $_ -match '^[1-9FCTVYPX] {2}' })
-        Assert-Equal $rows.Count 15
+        $rows = @($rendered.Lines | Where-Object { $_ -match '^[1-9MFCTVYPX] {2}' })
+        Assert-Equal $rows.Count 16
         $keys = @($rows | ForEach-Object { $_.Substring(0, 1) })
-        Assert-Equal ($keys -join ',') '1,2,3,4,5,6,7,8,9,F,C,V,T,Y,X'
+        Assert-Equal ($keys -join ',') '1,2,3,4,5,6,7,8,9,M,F,C,V,T,Y,X'
         foreach ($line in $rows) {
-            Assert-Equal ([regex]::Matches($line, '(?:^| {2,})([1-9FCTVYPX]) {2}').Count) 1
+            Assert-Equal ([regex]::Matches($line, '(?:^| {2,})([1-9MFCTVYPX]) {2}').Count) 1
         }
     }
     Test-Case '布尔和空目录使用中文状态而非 True False 或空白' {

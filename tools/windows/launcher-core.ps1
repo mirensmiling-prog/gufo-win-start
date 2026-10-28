@@ -8,7 +8,7 @@ function New-GufoOptions {
         Speculative = 'off'; DraftPath = ''; DraftTokens = 7; MinDraftTokens = 1
         Think = 'auto'; CacheRamBytes = '0'; CacheDisk = ''
         CacheDiskBytes = '8589934592'; LogProgress = $true; DraftPolicy = 'adaptive'
-        MaxTokens = '-1'; EnableYarn = $false; VisionPath = ''
+        MaxTokens = '-1'; EnableYarn = $false; VisionPath = ''; Monitor = $false
     }
 }
 
