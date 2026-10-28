@@ -2,6 +2,8 @@
 
 适用于本目录的官方 Gufo v0.25.0。运行只需要 Windows 自带的 Windows PowerShell 5.1，不需要 Python、PyQt 或安装额外模块。
 
+<img width="1129" height="446" alt="image" src="https://github.com/user-attachments/assets/4ba4f538-c23f-4a54-9429-b5aef6535e5d" />
+
 ## 日常使用
 
 1. 保留完整官方发行包，将 `start.cmd`、`tools/windows/` 放在 `gufo.exe` 同级。
